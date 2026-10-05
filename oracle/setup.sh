@@ -79,11 +79,12 @@ sudo systemctl enable --now binance-dashboard
 # Deliberately NOT enabling/starting binance-bot (it trades live money).
 
 echo "==> Dashboard password (user: ${DASH_USER})"
-if [ -n "${DASH_PASS:-}" ]; then
-  sudo htpasswd -bBc "$HTPASSWD" "$DASH_USER" "$DASH_PASS"
-else
-  sudo htpasswd -Bc "$HTPASSWD" "$DASH_USER"
+GENERATED_PASS=""
+if [ -z "${DASH_PASS:-}" ]; then
+  DASH_PASS="$(openssl rand -base64 18 | tr -d '/+=' | cut -c1-16)"
+  GENERATED_PASS="$DASH_PASS"
 fi
+sudo htpasswd -bBc "$HTPASSWD" "$DASH_USER" "$DASH_PASS"
 
 echo "==> nginx for ${DOMAIN}"
 sed "s/__DOMAIN__/${DOMAIN}/g" "$APP_DIR/oracle/nginx.conf" | sudo tee /etc/nginx/sites-available/binance-bot >/dev/null
@@ -103,16 +104,18 @@ sudo netfilter-persistent save
 
 echo "==> HTTPS"
 if [ -n "$EMAIL" ]; then
-  sudo certbot --nginx -d "$DOMAIN" -m "$EMAIL" --agree-tos --no-eff-email --redirect --non-interactive \
-    || echo "certbot failed (is the DNS A record for ${DOMAIN} pointing here yet?). Re-run:  sudo certbot --nginx -d ${DOMAIN}"
+  EMAIL_ARGS=(-m "$EMAIL")
 else
-  echo "Skipped. Once DNS points here run:  sudo certbot --nginx -d ${DOMAIN} --redirect"
+  EMAIL_ARGS=(--register-unsafely-without-email)   # no expiry notices; renewals still run automatically
 fi
+sudo certbot --nginx -d "$DOMAIN" "${EMAIL_ARGS[@]}" --agree-tos --redirect --non-interactive \
+  || echo "certbot failed (is the DNS name ${DOMAIN} resolving to this server?). Re-run:  sudo certbot --nginx -d ${DOMAIN} --register-unsafely-without-email --agree-tos --redirect"
 
 cat <<MSG
 
 Done.
-  Dashboard:  https://${DOMAIN}   (user: ${DASH_USER})
+  Dashboard:  https://${DOMAIN}
+  Login:      user ${DASH_USER}   password ${GENERATED_PASS:-<the one you set>}   (SAVE THIS)
   Edit keys:  nano ${APP_DIR}/.env   then   sudo systemctl restart binance-dashboard
   Start bot:  sudo systemctl enable --now binance-bot     (live trading; check config.yaml first)
   Stop bot:   ./manage.sh stop     Kill switch: ./manage.sh kill

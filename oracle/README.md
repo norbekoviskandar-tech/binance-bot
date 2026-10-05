@@ -21,7 +21,7 @@ Create an `A` record (e.g. `bot.yourdomain.com`) pointing at the public IP. HTTP
 ssh ubuntu@<public-ip>
 sudo git clone https://github.com/norbekoviskandar-tech/binance-bot.git /opt/binance-bot
 sudo chown -R $USER: /opt/binance-bot && cd /opt/binance-bot
-DOMAIN=bot.yourdomain.com EMAIL=you@example.com bash oracle/setup.sh
+DOMAIN=bot.yourdomain.com bash oracle/setup.sh   # EMAIL=you@example.com optional
 nano .env      # BINANCE_API_KEY / BINANCE_API_SECRET
 sudo systemctl restart binance-dashboard
 ```
