@@ -1,3 +1,5 @@
+> **Use `oracle/README.md` instead.** This guide (and `deploy.sh`) expose the dashboard on `http://IP:8501` with no login, and the dashboard can close positions and start auto-trading with your live keys. The `oracle/` folder puts it behind HTTPS and a password.
+
 # Oracle Cloud Free Tier Deployment Guide
 
 ## Why Oracle Cloud Free Tier?
