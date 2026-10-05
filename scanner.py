@@ -82,7 +82,7 @@ def get(path, params=None):
 
 def get_candles(symbol, interval, limit=100, only_closed=True):
     """Download candles into a table. By default the unfinished (still forming) candle is thrown away."""
-    raw = get("/api/v3/klines", {"symbol": symbol, "interval": interval, "limit": limit})
+    raw = get("/fapi/v1/klines", {"symbol": symbol, "interval": interval, "limit": limit})
     df = pd.DataFrame(raw).iloc[:, :7]
     df.columns = ["open_time", "open", "high", "low", "close", "volume", "close_time"]
     for col in ("open", "high", "low", "close", "volume"):
@@ -94,11 +94,12 @@ def get_candles(symbol, interval, limit=100, only_closed=True):
 
 
 def liquid_pairs():
-    """All tradable USDT spot pairs with at least MIN_VOLUME_USD traded in the last 24h, biggest first."""
-    info = get("/api/v3/exchangeInfo", {"permissions": "SPOT"})
+    """All tradable USDT perpetual futures pairs with at least MIN_VOLUME_USD traded in the last 24h, biggest first."""
+    info = get("/fapi/v1/exchangeInfo")
     ok = {s["symbol"] for s in info["symbols"]
-          if s["status"] == "TRADING" and s["quoteAsset"] == "USDT" and s["baseAsset"] not in STABLECOINS}
-    tickers = get("/api/v3/ticker/24hr")
+          if s["status"] == "TRADING" and s.get("contractType") == "PERPETUAL"
+          and s["quoteAsset"] == "USDT" and s["baseAsset"] not in STABLECOINS}
+    tickers = get("/fapi/v1/ticker/24hr")
     rows = [t for t in tickers if t["symbol"] in ok and float(t["quoteVolume"]) >= MIN_VOLUME_USD]
     rows.sort(key=lambda t: -float(t["quoteVolume"]))
     return [t["symbol"] for t in rows]
@@ -213,7 +214,7 @@ def update_followups():
                 continue
             target_ms = int((t0 + m * 60) // 60 * 60 * 1000)
             try:
-                k = get("/api/v3/klines", {"symbol": r["symbol"], "interval": "1m", "startTime": target_ms, "limit": 1})
+                k = get("/fapi/v1/klines", {"symbol": r["symbol"], "interval": "1m", "startTime": target_ms, "limit": 1})
             except RuntimeError:
                 continue
             if k:
@@ -276,7 +277,7 @@ def run_scan(quiet=False):
         print(f"\n  {'COIN':<12}{'PRICE':>14}{'VOL x':>8}{'RSI':>7}{'COIN 4h':>10}{'BTC 4h':>9}{'vs BTC':>9}")
 
     for h in hits:
-        h["live_price"] = float(get("/api/v3/ticker/price", {"symbol": h["symbol"]})["price"])
+        h["live_price"] = float(get("/fapi/v1/ticker/price", {"symbol": h["symbol"]})["price"])
         if not quiet:
             print(f"  {h['symbol'].replace('USDT', ''):<12}{h['live_price']:>14.8g}{h['volume_ratio']:>8.2f}{h['rsi']:>7.1f}"
                   f"{h['change_4h']:>+9.2f}%{btc_4h:>+8.2f}%{h['change_4h'] - btc_4h:>+8.2f}%")
