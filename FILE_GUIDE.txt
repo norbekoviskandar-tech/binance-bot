@@ -1,0 +1,50 @@
+===========================================
+WHICH FILE DO I CLICK?
+===========================================
+
+FOR SETUP (Do this first):
+---------------------------
+📁 SETUP.bat
+   - Click this FIRST
+   - It installs everything automatically
+   - Creates the .env file for your API keys
+   - Only need to run this ONCE
+
+FOR TRADING:
+------------
+📁 RUN_BOT.bat
+   - Click this to START the bot
+   - Bot will scan for trades
+   - Press Ctrl+C to stop
+
+FOR DASHBOARD:
+---------------
+📁 DASHBOARD.bat
+   - Click this to open the website
+   - Shows trading signals and bot status
+   - Open browser to: http://localhost:8501
+
+FOR HELP:
+---------
+📁 START_HERE.txt
+   - Simple instructions
+   - Read this if you're confused
+
+FOR FREE 24/7 HOSTING:
+-----------------------
+📁 ORACLE_DEPLOY.md
+   - Instructions for free cloud hosting
+   - More advanced - read if you want 24/7
+
+===========================================
+SIMPLE WORKFLOW:
+===========================================
+
+1. Click: SETUP.bat (only once)
+2. Edit .env file (add your API keys)
+3. Click: RUN_BOT.bat (to start trading)
+4. Click: DASHBOARD.bat (to view status)
+
+That's it!
+
+===========================================

@@ -1,0 +1,16 @@
+daily_loss_limit_usd: 5
+equity: 30.0
+funding_limit: 0.0005
+max_daily_loss_pct: 5
+max_leverage: 5
+max_open_positions: 1
+max_weekly_loss_pct: 10
+min_score: 55
+require_backtest_pass: true
+risk_per_trade_usd: 0.3
+scan_interval_min: 5
+stop_atr_mult: 2.0
+tp1_r: 2.2
+tp2_r: 3.5
+universe_size: 25
+use_testnet: false

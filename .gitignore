@@ -1,0 +1,42 @@
+# Environment variables with API keys
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+env/
+ENV/
+
+# Logs
+*.log
+bot.log
+autobot.log
+
+# Trade data
+trades.csv
+trades_log.csv
+signals.csv
+backtest_trades.csv
+
+# State files
+state.json
+STOP
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Backup files
+backup-*.tar.gz
+*.bak

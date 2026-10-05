@@ -1,0 +1,72 @@
+===========================================
+BINANCE TRADING BOT - SIMPLE INSTRUCTIONS
+===========================================
+
+HOW TO START (Just 3 steps):
+==============================
+
+STEP 1: Run SETUP
+-----------------
+Double-click the file: SETUP.bat
+
+This will:
+- Install everything needed
+- Create the .env file
+- Set up the bot automatically
+
+STEP 2: Add Your API Keys
+---------------------------
+After SETUP finishes, it will create a file called .env
+
+To add your API keys:
+1. Right-click on .env file
+2. Click "Open with" then "Notepad"
+3. Replace these lines with your real keys:
+   
+   BINANCE_LIVE_API_KEY=YOUR_REAL_KEY_HERE
+   BINANCE_LIVE_API_SECRET=YOUR_REAL_SECRET_HERE
+
+4. Save the file (File -> Save)
+5. Close Notepad
+
+STEP 3: Run the Bot
+-------------------
+Double-click: RUN_BOT.bat
+
+The bot will start and scan for trading opportunities.
+
+===========================================
+OTHER THINGS YOU CAN DO:
+===========================================
+
+To View the Dashboard:
+----------------------
+Double-click: DASHBOARD.bat
+Then open your browser to: http://localhost:8501
+
+To Stop the Bot:
+----------------
+In the bot window, press: Ctrl+C
+
+To Start Again:
+---------------
+Double-click: RUN_BOT.bat again
+
+===========================================
+IMPORTANT NOTES:
+===========================================
+
+- Keep your computer ON to keep the bot running
+- The bot will STOP if your computer sleeps or shuts down
+- To keep it running 24/7, disable sleep mode in Windows settings
+- Never share your .env file with anyone (it has your API keys)
+
+===========================================
+IF YOU NEED HELP:
+===========================================
+
+- The bot will show messages in the window
+- Check the dashboard at http://localhost:8501
+- Read ORACLE_DEPLOY.md if you want free 24/7 hosting
+
+===========================================
