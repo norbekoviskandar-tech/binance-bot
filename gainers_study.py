@@ -12,7 +12,9 @@ stretched far above its EMA. The study measures which of these actually add edge
 Entries are simulated at the NEXT candle open and fees+slippage are charged (FEE).
 """
 import argparse
+import csv
 import time
+from pathlib import Path
 
 import pandas as pd
 import requests
@@ -136,18 +138,112 @@ def study(nsym, bars):
           "(small n = noise) and the last-30% block agrees with the first-70%. Edit RULE at the top and re-run.")
 
 
-def live(top):
+# ----------------------------------------------------------------------------- crowd vs whales
+SMALL_USD, WHALE_USD = 1000.0, 25000.0  # one aggressive order below / above these sizes (USD)
+MIX = dict(small_buy_share_min=0.60, whale_buy_share_max=0.15, top5_buy_share_max=0.20, buy_count_share_min=0.55)
+LOG_FILE = "mix_log.csv"
+
+
+def trade_mix(symbol, minutes=10, max_pages=5):
+    """Who is buying? Uses real trades (aggTrades: one row = one taker order). Public data, no key.
+    Returns shares of AGGRESSIVE BUY volume that came from small orders / whale orders / the 5 biggest orders."""
+    start = int(time.time() * 1000) - minutes * 60000
+    trades, frm = [], None
+    for _ in range(max_pages):
+        page = api("/fapi/v1/aggTrades", {"symbol": symbol, "limit": 1000, **({"fromId": frm} if frm else {"startTime": start})})
+        trades += page
+        if len(page) < 1000:
+            break
+        frm = page[-1]["a"] + 1
+        time.sleep(0.1)
+    if len(trades) < 50:
+        return None
+    d = pd.DataFrame(trades)
+    d["usd"] = d.p.astype(float) * d.q.astype(float)
+    d["buy"] = ~d.m.astype(bool)  # m = buyer is the maker, so taker-buy means m is False
+    b, sl = d[d.buy], d[~d.buy]
+    if len(b) < 20 or b.usd.sum() == 0:
+        return None
+    bu = b.usd.sum()
+    return dict(trades=len(d), covered_min=(d["T"].iloc[-1] - d["T"].iloc[0]) / 60000,
+                buy_count_share=len(b) / len(d),
+                small_buy_share=b.usd[b.usd < SMALL_USD].sum() / bu,
+                whale_buy_share=b.usd[b.usd >= WHALE_USD].sum() / bu,
+                top5_buy_share=b.usd.nlargest(5).sum() / bu,
+                avg_buy=b.usd.mean(), avg_sell=sl.usd.mean() if len(sl) else float("nan"))
+
+
+def crowd_ok(m, r=MIX):
+    return bool(m and m["small_buy_share"] >= r["small_buy_share_min"] and m["whale_buy_share"] <= r["whale_buy_share_max"]
+                and m["top5_buy_share"] <= r["top5_buy_share_max"] and m["buy_count_share"] >= r["buy_count_share_min"])
+
+
+def ls_ratios(symbol):
+    """Binance's own long/short stats: top traders by POSITION size (whales) vs all ACCOUNTS (the crowd)."""
+    out = {}
+    for key, path in (("top_pos", "/futures/data/topLongShortPositionRatio"), ("crowd_acct", "/futures/data/globalLongShortAccountRatio")):
+        try:
+            out[key] = float(api(path, {"symbol": symbol, "period": "15m", "limit": 1})[-1]["longShortRatio"])
+        except Exception:  # noqa: BLE001
+            out[key] = float("nan")
+    return out
+
+
+def live(top, log=False):
     tick = api("/fapi/v1/ticker/24hr")
     cand = sorted((x for x in tick if x["symbol"].endswith("USDT") and float(x["quoteVolume"]) > 2e7),
                   key=lambda x: -float(x["priceChangePercent"]))[:top]
-    print(f"{'symbol':14s}{'24h%':>7s}{'1h%':>6s}{'volx':>6s}{'buy%':>6s}{'trdx':>6s}{'ext':>6s}  pass")
+    print(f"{'symbol':13s}{'1h%':>5s}{'volx':>6s}{'buy%':>5s}{'trdx':>5s} {'rule':>4s} | {'small%':>6s}{'whale%':>7s}{'top5%':>6s}{'crowd':>6s} | {'whaleLS':>7s}{'crowdLS':>8s}")
     for x in cand:
-        f = features(klines(x["symbol"], 200)).iloc[[-1]]
+        s = x["symbol"]
+        f = features(klines(s, 200)).iloc[[-1]]
         r = f.iloc[0]
-        ok = bool(signal(f).iloc[0])
-        print(f"{x['symbol']:14s}{float(x['priceChangePercent']):7.1f}{r.ret1h:6.1f}{r.vol_x:6.1f}"
-              f"{r.buy_ratio * 100:6.0f}{r.trades_x:6.1f}{r.ext_atr:6.1f}  {'YES' if ok else '-'}")
+        rule = bool(signal(f).iloc[0])
+        line = f"{s:13s}{r.ret1h:5.1f}{r.vol_x:6.1f}{r.buy_ratio * 100:5.0f}{r.trades_x:5.1f} {'YES' if rule else '-':>4s} |"
+        if r.ret1h >= 1.0 and r.vol_x >= 2:  # only look at trades for coins already moving (saves rate limit)
+            m, ls = trade_mix(s), ls_ratios(s)
+            if m:
+                crowd = crowd_ok(m)
+                line += f" {m['small_buy_share'] * 100:6.0f}{m['whale_buy_share'] * 100:7.0f}{m['top5_buy_share'] * 100:6.0f}{'YES' if crowd else '-':>6s} | {ls['top_pos']:7.2f}{ls['crowd_acct']:8.2f}"
+                if log and rule:
+                    new = not Path(LOG_FILE).exists()
+                    with open(LOG_FILE, "a", newline="") as fh:
+                        w = csv.writer(fh)
+                        if new:
+                            w.writerow(["t_ms", "symbol", "price", "crowd", *m.keys(), "top_pos_ls", "crowd_acct_ls"])
+                        w.writerow([int(time.time() * 1000), s, x["lastPrice"], int(crowd), *m.values(), ls["top_pos"], ls["crowd_acct"]])
+        print(line)
         time.sleep(0.1)
+
+
+def score():
+    """After the log has a few hours/days of rows: did 'crowd' buying beat 'whale-led' buying? (fees included)"""
+    if not Path(LOG_FILE).exists():
+        print("No mix_log.csv yet. Run: live --log --loop 300   and let it collect.")
+        return
+    d = pd.read_csv(LOG_FILE)
+    rows = []
+    for _, r in d.iterrows():
+        out = {"crowd": r.crowd}
+        ok = True
+        for mins in (30, 60, 120):
+            t = int(r.t_ms) + mins * 60000
+            if t > time.time() * 1000 - 120000:
+                ok = False
+                break
+            k = api("/fapi/v1/klines", {"symbol": r.symbol, "interval": "1m", "startTime": t, "limit": 1})
+            out[f"r{mins}"] = (float(k[0][1]) / r.price - 1) * 100 - FEE * 100
+            time.sleep(0.1)
+        if ok:
+            rows.append(out)
+    x = pd.DataFrame(rows)
+    if x.empty:
+        print("Rows are too recent. Come back after 2+ hours of logging.")
+        return
+    for name, g in (("CROWD-led (many small buyers)", x[x.crowd == 1]), ("NOT crowd (whale/mixed)", x[x.crowd == 0])):
+        if len(g):
+            print(f"{name:32s} n={len(g):3d}  30m={g.r30.mean():+.2f}%  1h={g.r60.mean():+.2f}%  2h={g.r120.mean():+.2f}%  win1h={(g.r60 > 0).mean() * 100:.0f}%")
+    print("Need n >= 30 per group before believing any difference.")
 
 
 if __name__ == "__main__":
@@ -158,5 +254,17 @@ if __name__ == "__main__":
     a.add_argument("--bars", type=int, default=1500)
     b = sub.add_parser("live")
     b.add_argument("--top", type=int, default=40)
+    b.add_argument("--log", action="store_true", help="save rule-passing coins + crowd/whale data to mix_log.csv")
+    b.add_argument("--loop", type=int, default=0, help="repeat every N seconds (e.g. 300)")
+    sub.add_parser("score")
     args = ap.parse_args()
-    study(args.symbols, args.bars) if args.cmd == "study" else live(args.top)
+    if args.cmd == "study":
+        study(args.symbols, args.bars)
+    elif args.cmd == "score":
+        score()
+    else:
+        while True:
+            live(args.top, args.log)
+            if not args.loop:
+                break
+            time.sleep(args.loop)
