@@ -225,6 +225,8 @@ def render():
             res["mode"], res["ncoins"] = mode, len(data)
             res["curves"] = {"base": run_config(data, res["base"]["p"], fee, res["cut"], res["hi"] + 1),
                              **{i: run_config(data, b["p"], fee, res["cut"], res["hi"] + 1) for i, b in enumerate(res["best"])}}
+            import flaw_finder
+            res["flaw"] = flaw_finder.build_flaw_data(data, res, fee)
             st.session_state["sl_res"] = res
             bar.empty()
         except Exception as ex:
@@ -246,7 +248,9 @@ def render():
         rows[f"Candidate #{i + 1} – search period"] = fmt(b["train"])
         rows[f"Candidate #{i + 1} – UNSEEN"] = fmt(b["test"])
     st.dataframe(pd.DataFrame(rows).T, use_container_width=True)
+    import flaw_finder
     if not res["best"]:
+        flaw_finder.render_flaws(st, res)
         st.warning("No setting beat the training filter (positive expectancy, profit factor > 1.1, enough trades). That is a real answer: "
                    "this idea has no reliable edge after fees on these coins. Try more days or more coins, or a different idea.")
         return
@@ -267,6 +271,7 @@ def render():
     if tr:
         why = pd.Series([t["why"] for t in tr]).value_counts()
         st.caption("How the best candidate's unseen trades ended: " + ", ".join(f"{k} {v}" for k, v in why.items()))
+    flaw_finder.render_flaws(st, res)
     with st.expander("What was wrong with the original script"):
         st.markdown(
             "- **RSI was shifted by one candle** (`np.diff` drops a value, so every RSI belonged to the previous candle) and used a plain average instead of Wilder smoothing.\n"
