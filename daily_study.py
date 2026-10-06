@@ -89,6 +89,16 @@ def stats(net, mkt=None):
                 pf=(w.sum() / -ls.sum()) if ls.sum() < 0 else 99.0, tot=net.sum(), bench=float(np.mean(mkt)) if mkt is not None and len(mkt) else 0.0)
 
 
+def day_t(t, net):
+    """t-statistic of the average trade, clustered by day (coins on the same day move together, so they count as one observation)."""
+    if len(net) < 2:
+        return 0.0
+    d = pd.Series(np.asarray(net, float)).groupby(np.asarray(t)).mean()
+    if len(d) < 5 or d.std() == 0:
+        return 0.0
+    return float(d.mean() / (d.std() / np.sqrt(len(d))))
+
+
 def rule_mask(ev, r, topn):
     m = (ev.gain >= r["g_lo"]) & (ev.gain <= r["g_hi"]) & (ev.clv >= r["clv"]) & (ev.vol_x >= r["vol_x"]) & (ev.buy >= r["buy"]) \
         & (ev.prev7 <= r["prev7"]) & (ev["rank"] <= min(r["rank"], topn))
@@ -124,7 +134,7 @@ def search(ev, topn, fee, min_ev):
         m = rule_mask(ev, r, topn)
         net = r["side"] * ev.r1.values - fee
         sel = m & part["final"]
-        best.append(dict(r=r, train=tr, val=va, final=stats(net[sel]), curve=(ev.t.values[sel], net[sel])))
+        best.append(dict(r=r, train=tr, val=va, final=stats(net[sel]), final_t=day_t(ev.t.values[sel], net[sel]), curve=(ev.t.values[sel], net[sel])))
     base = {}
     for name, p in part.items():
         for side, lab in ((1, "Long"), (-1, "Short")):
@@ -169,8 +179,10 @@ def verdict(b):
     f = b["final"]
     if f["n"] < 20:
         return "⚠️ too few trades in the final period"
+    if f["avg"] > 0 and f["pf"] > 1.15 and b.get("final_t", 0) >= 2.0:
+        return "✅ still positive on the FINAL days nothing was tuned on, and statistically distinguishable from luck (day-level t ≥ 2)"
     if f["avg"] > 0 and f["pf"] > 1.15:
-        return "✅ still positive on the FINAL days nothing was tuned on"
+        return "⚠️ positive on the final days but NOT statistically convincing (day-level t < 2); this is what luck looks like when thousands of rules are tried"
     if f["avg"] > 0:
         return "⚠️ barely positive on the final days"
     return "❌ failed on the final days (it was luck / overfit)"
@@ -232,7 +244,7 @@ def render():
             for lab, k in (("search", "train"), ("validation", "val"), ("FINAL", "final")):
                 s = b[k]
                 out[f"Rule #{i + 1} – {lab}"] = {"Trades": s["n"], "Avg %": round(s["avg"], 2), "Win %": round(s["win"], 1), "Profit factor": round(s["pf"], 2),
-                                                  "Total %": round(s["tot"], 1)}
+                                                  "Total %": round(s["tot"], 1), "Day-level t": round(b["final_t"], 2) if k == "final" else None}
         st.dataframe(pd.DataFrame(out).T, use_container_width=True)
         best = res["best"][0]
         st.markdown(f"**Best rule: {verdict(best)}**")
