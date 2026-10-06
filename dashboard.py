@@ -24,6 +24,7 @@ import bot
 
 # Import autobot for autonomous trading
 import autobot
+import backtester
 
 # Load API keys from .env
 load_dotenv()
@@ -334,7 +335,7 @@ if st.sidebar.button("💾 Save to config.yaml"):
 # =====================================================================================
 # TABS
 # =====================================================================================
-tab1, tab2, tab3, tab4 = st.tabs(["🔍 Scanner", "🤖 Bot", "💼 Account", "📜 Trade Log"])
+tab1, tab2, tab3, tab4, tab5 = st.tabs(["🔍 Scanner", "🤖 Bot", "💼 Account", "📜 Trade Log", "🧪 Backtest"])
 
 # =====================================================================================
 # SCANNER TAB
@@ -721,3 +722,6 @@ st.markdown("""
     Last updated: {} | Data source: Binance Public API | Mode: {} | Read-only unless LIVE mode confirmed
 </div>
 """.format(datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC"), st.session_state.mode), unsafe_allow_html=True)
+
+with tab5:
+    backtester.render(risk_per_trade, equity)

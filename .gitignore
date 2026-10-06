@@ -1,42 +1,38 @@
-# Environment variables with API keys
-.env
-
-# Python
-__pycache__/
-*.py[cod]
-*$py.class
-*.so
-.Python
-venv/
-env/
-ENV/
-
-# Logs
-*.log
-bot.log
-autobot.log
-
-# Trade data
-trades.csv
-trades_log.csv
-signals.csv
-backtest_trades.csv
-
-# State files
-state.json
-STOP
-
-# IDE
-.vscode/
-.idea/
-*.swp
-*.swo
-*~
-
-# OS
-.DS_Store
-Thumbs.db
 
 # Backup files
-backup-*.tar.gz
+# Environment variables with API keys
+# IDE
+# Logs
+# OS
+# Python
+# State files
+# Trade data
+*$py.class
 *.bak
+*.log
+*.py[cod]
+*.so
+*.swo
+*.swp
+*~
+.DS_Store
+.Python
+.env
+.idea/
+.vscode/
+ENV/
+STOP
+Thumbs.db
+__pycache__/
+autobot.log
+backtest_trades.csv
+backup-*.tar.gz
+bot.log
+bt_cache/
+env/
+mix_log.csv
+signals.csv
+state.json
+trades.csv
+trades_log.csv
+venv/
