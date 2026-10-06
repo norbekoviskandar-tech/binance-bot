@@ -25,6 +25,7 @@ import bot
 # Import autobot for autonomous trading
 import autobot
 import backtester
+import radar
 
 # Load API keys from .env
 load_dotenv()
@@ -335,7 +336,7 @@ if st.sidebar.button("💾 Save to config.yaml"):
 # =====================================================================================
 # TABS
 # =====================================================================================
-tab1, tab2, tab3, tab4, tab5 = st.tabs(["🔍 Scanner", "🤖 Bot", "💼 Account", "📜 Trade Log", "🧪 Backtest"])
+tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(["🔍 Scanner", "🤖 Bot", "💼 Account", "📜 Trade Log", "🧪 Backtest", "⚡ Top-10 Radar"])
 
 # =====================================================================================
 # SCANNER TAB
@@ -725,3 +726,6 @@ st.markdown("""
 
 with tab5:
     backtester.render(risk_per_trade, equity)
+
+with tab6:
+    radar.render()
