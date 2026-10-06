@@ -22,7 +22,7 @@ COMMON = dict(entry="signal", ret1h_lo=1.5, ret1h_hi=8.0, use_volume=True, vol_x
               pb_atr=0.5, arm_bars=8, pb_buy=0.55, stop_atr=2.0, tp1_r=2.2, tp1_frac=0.5, tp2_r=3.5,
               be_after_tp1=False, trail_bars=0, time_bars=0, time_min_r=0.5, max_hold=96,
               cooldown=16, max_per_day=3, stop_after_losses=3,
-              tf="15m", top_n=0, min_vol24=0, accel_min=1.0, min_stop_pct=0.0, fade_frac=0.0)
+              tf="15m", top_n=0, min_vol24=0, accel_min=1.0, min_stop_pct=0.0, fade_frac=0.0, cool_exit=0)
 
 FAST = "G. Top-10 volume velocity (fast in/out)"
 FAST_P = dict(tf="1m", top_n=10, min_vol24=2e7, ret1h_lo=0.8, ret1h_hi=6.0, vol_x=4.0, accel_min=1.3, buy_ratio=0.58, trades_x=2.5,
@@ -38,6 +38,7 @@ PRESETS = {
     FAST: FAST_P,
     "H. Fast scalp (same signal, quick exit)": {**FAST_P, "tp1_r": 1.2, "tp1_frac": 1.0, "tp2_r": 1.2, "min_stop_pct": 0.5, "time_bars": 10,
                                                "fade_frac": 0.5, "trail_bars": 0, "be_after_tp1": False},
+    "I. Top-10 velocity + cooling-off exit": {**FAST_P, "cool_exit": 2, "fade_frac": 0.0},
     "E. Strict breakout + BTC filter": dict(vol_x=4.0, buy_ratio=0.60, ret1h_hi=6.0, btc_filter=True, stop_atr=1.8, tp1_r=1.5,
                                            tp1_frac=0.5, tp2_r=3.0, be_after_tp1=True, trail_bars=4, time_bars=8),
 }
@@ -95,6 +96,7 @@ def prep(df, btc_ok, tf="15m"):
         f["level"] = df.h.rolling(32).max().shift(1)  # the breakout level
         f["bar_buy"] = df.tbq / df.qv.replace(0, np.nan)  # buyer share inside a single candle
     f["btc_ok"] = df.t.map(btc_ok).fillna(False).astype(bool)
+    f["cool"] = vel.cooling(df)["cool"]  # 0-5 cooling-off score (buys vs sells)
     return f
 
 
@@ -149,6 +151,7 @@ def simulate(df, f, e, p, fee_pct):
     end = min(e + p["max_hold"], len(df)) - 1
     bar_ms = int(t[1] - t[0])
     v3 = pd.Series(df.qv.values).rolling(3).sum().values if p["fade_frac"] else None
+    cool = f.cool.values if p["cool_exit"] else None
     peak = float(v3[e - 1]) if v3 is not None and v3[e - 1] == v3[e - 1] else 0.0
     k = e
     for k in range(e, end + 1):
@@ -178,6 +181,10 @@ def simulate(df, f, e, p, fee_pct):
                 real += frac * (c[k] - price) / R
                 reason, done = "volume faded", True
                 break
+        if cool is not None and k - e >= 2 and cool[k] >= p["cool_exit"]:  # buyers drying up / sellers taking over
+            real += frac * (c[k] - price) / R
+            reason, done = "cooling off", True
+            break
         if p["time_bars"] and k - e + 1 >= p["time_bars"] and not tp1 and (best - price) / R < p["time_min_r"]:
             real += frac * (c[k] - price) / R
             reason, done = "time stop", True
@@ -301,6 +308,7 @@ def render(risk_usd=0.3, equity=30.0):
             p["top_n"] = g[1].number_input("Only top-N risers (0=all)", 0, 30, int(p["top_n"]))
             p["fade_frac"] = g[2].number_input("Exit when volume fades below x of peak (0=off)", 0.0, 0.9, float(p["fade_frac"]), 0.05)
             p["min_stop_pct"] = g[3].number_input("Minimum stop %", 0.0, 3.0, float(p["min_stop_pct"]), 0.1)
+            p["cool_exit"] = st.number_input("Exit when cooling score ≥ (0=off, max 5)", 0, 5, int(p["cool_exit"]))
             params["F. Custom"] = p
     if st.button("▶ Run backtest", type="primary", disabled=not params):
         bar = st.progress(0.0, "Starting…")

@@ -23,3 +23,27 @@ def features_1m(df):
     f["pace"] = qv.rolling(15).sum() / (f.vol24 / 96)  # last 15 min volume as a multiple of an average 15 min slice of the day
     f["ret24"] = (c / c.shift(1440) - 1) * 100
     return f
+
+
+def cooling(df):
+    """Is the move running out of steam? Compares aggressive BUY volume against aggressive SELL volume (taker data).
+    Five warning signs, score 0-5 (each True = 1):
+      sell   sellers outweigh buyers over the last 3 candles (buyer share < 48%)
+      flip   net buying (buys minus sells) was positive and just turned negative
+      div    price is at its recent high but net buying is less than half of its recent peak (weak push = divergence)
+      fade   total volume fell below half of its recent peak
+      rej    a rejection candle: long upper wick, closed red, on above-normal volume"""
+    qv, buy = df.qv, df.tbq
+    d = buy - (qv - buy)  # net aggressive flow per candle (USD)
+    q3, b3, d3 = qv.rolling(3).sum(), buy.rolling(3).sum(), d.rolling(3).sum()
+    out = pd.DataFrame(index=df.index)
+    out["sell"] = (b3 / q3.replace(0, np.nan)) < 0.48
+    out["flip"] = (d3 < 0) & (d3.shift(3) > 0)
+    peak = d3.rolling(15).max()
+    out["div"] = (df.c >= df.h.rolling(15).max() * 0.998) & (peak > 0) & (d3 < 0.5 * peak)
+    out["fade"] = q3 < 0.5 * q3.rolling(15).max()
+    upper = df.h - np.maximum(df.o, df.c)
+    out["rej"] = (upper / (df.h - df.l).replace(0, np.nan) >= 0.6) & (df.c < df.o) & (qv > qv.rolling(30).median())
+    out = out.fillna(False).astype(bool)
+    out["cool"] = out[["sell", "flip", "div", "fade", "rej"]].sum(axis=1)
+    return out
