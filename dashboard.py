@@ -26,6 +26,7 @@ import bot
 import autobot
 import backtester
 import radar
+import live_tab
 
 # Load API keys from .env
 load_dotenv()
@@ -336,7 +337,7 @@ if st.sidebar.button("💾 Save to config.yaml"):
 # =====================================================================================
 # TABS
 # =====================================================================================
-tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(["🔍 Scanner", "🤖 Bot", "💼 Account", "📜 Trade Log", "🧪 Backtest", "⚡ Top-10 Radar"])
+tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs(["🔍 Scanner", "🤖 Bot", "💼 Account", "📜 Trade Log", "🧪 Backtest", "⚡ Top-10 Radar", "📡 Live Tape"])
 
 # =====================================================================================
 # SCANNER TAB
@@ -729,3 +730,6 @@ with tab5:
 
 with tab6:
     radar.render()
+
+with tab7:
+    live_tab.render()
