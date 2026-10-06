@@ -61,6 +61,8 @@ def signal_idx(df, f, p):
         m &= df.c > f.hh20
     if p["green"]:
         m &= f.green
+    if p.get("top_n"):
+        m &= f.rank24 <= p["top_n"]  # coin must be among the day's top-N risers (24h change) at the signal candle
     m &= f.ema200.notna() & f.atr.notna()
     return np.flatnonzero(m.fillna(False).values)
 
@@ -138,6 +140,11 @@ def load(symbols, days, progress=lambda x, m: None, interval="1h"):
         data[s] = (df, f, dict(o=df.o.values, h=df.h.values, l=df.l.values, c=df.c.values, atr=f.atr.values, t=df.t.values))
     if not data:
         raise RuntimeError("No candle data downloaded.")
+    bars24 = 24 if interval == "1h" else 96
+    ret = pd.DataFrame({s: pd.Series((df.c / df.c.shift(bars24) - 1).values, index=df.t.values) for s, (df, f, a) in data.items()})
+    rk = ret.rank(axis=1, ascending=False)  # 1 = biggest 24h gainer among the loaded coins at that moment
+    for s, (df, f, a) in data.items():
+        f["rank24"] = df.t.map(rk[s]).values
     return data
 
 
@@ -157,12 +164,13 @@ def sample_configs(n, seed=7):
     return cfgs
 
 
-def optimize(data, fee, n_cfg=250, split=0.6, min_trades=40, progress=lambda x, m: None):
+def optimize(data, fee, n_cfg=250, split=0.6, min_trades=40, progress=lambda x, m: None, top_n=0):
     ts = np.concatenate([a["t"] for _, _, a in data.values()])
     lo, hi = int(ts.min()), int(ts.max())
     cut = int(lo + (hi - lo) * split)
     rows = []
-    cfgs = sample_configs(n_cfg)
+    cfgs = [dict(p, top_n=top_n) for p in sample_configs(n_cfg)]
+    orig = dict(ORIGINAL, top_n=top_n)
     for i, p in enumerate(cfgs):
         if i % 10 == 0:
             progress((i + 1) / len(cfgs), f"Testing settings {i + 1}/{len(cfgs)}")
@@ -173,7 +181,7 @@ def optimize(data, fee, n_cfg=250, split=0.6, min_trades=40, progress=lambda x, 
     best = []
     for _, p, mtr in rows[:5]:
         best.append(dict(p=p, train=mtr, test=metrics(run_config(data, p, fee, cut, hi + 1))))
-    base = dict(train=metrics(run_config(data, ORIGINAL, fee, lo, cut)), test=metrics(run_config(data, ORIGINAL, fee, cut, hi + 1)))
+    base = dict(train=metrics(run_config(data, orig, fee, lo, cut)), test=metrics(run_config(data, orig, fee, cut, hi + 1)), p=orig)
     return dict(best=best, base=base, cut=cut, lo=lo, hi=hi, tested=len(cfgs), passed=len(rows))
 
 
@@ -197,17 +205,25 @@ def render():
                "Real Binance futures candles, public data. Past results do not guarantee future results.")
     c = st.columns(5)
     days = c[0].slider("Days of history", 90, 365, 180, key="sl_days")
-    nsym = c[1].slider("Coins (top by volume)", 3, 25, 10, key="sl_n")
+    nsym = c[1].slider("Coin pool (top by volume)", 3, 60, 40, key="sl_n")
     fee = c[2].number_input("Round-trip fee + slippage %", 0.05, 1.0, 0.20, 0.05, key="sl_fee")
     ncfg = c[3].slider("Settings to try", 50, 600, 250, 50, key="sl_cfg")
     mint = c[4].slider("Min trades to count", 20, 100, 40, 5, key="sl_min")
+    d = st.columns([2, 3])
+    mode = d[0].selectbox("Which coins may be traded", ["Day's top 10 gainers", "Day's top 5 gainers", "Day's top 20 gainers", "All loaded coins"], key="sl_mode",
+                          help="Top gainers = the coin must be among the biggest 24h risers (out of the loaded coins) at the moment of the signal. "
+                               "It changes every day, unlike 'top by volume'. Load more coins so the ranking is meaningful.")
+    top_n = {"Day's top 10 gainers": 10, "Day's top 5 gainers": 5, "Day's top 20 gainers": 20}.get(mode, 0)
+    d[1].caption("**Coins slider** = how many of the biggest Binance futures coins are loaded as the pool. The day's top gainers are ranked "
+                 "inside that pool, so use 40–60 coins for the top-10 modes (with only 10 coins, 'top 10' would mean everything).")
     if st.button("▶ Run strategy lab", type="primary", key="sl_run"):
         bar = st.progress(0.0, "Starting…")
         try:
             syms = ["BTCUSDT"] + bt.universe(nsym)[:max(0, nsym - 1)]
             data = load(syms, days, lambda x, m: bar.progress(min(x, 1.0) * 0.5, m))
-            res = optimize(data, fee, ncfg, 0.6, mint, lambda x, m: bar.progress(0.5 + min(x, 1.0) * 0.5, m))
-            res["curves"] = {"base": run_config(data, ORIGINAL, fee, res["cut"], res["hi"] + 1),
+            res = optimize(data, fee, ncfg, 0.6, mint, lambda x, m: bar.progress(0.5 + min(x, 1.0) * 0.5, m), top_n)
+            res["mode"], res["ncoins"] = mode, len(data)
+            res["curves"] = {"base": run_config(data, res["base"]["p"], fee, res["cut"], res["hi"] + 1),
                              **{i: run_config(data, b["p"], fee, res["cut"], res["hi"] + 1) for i, b in enumerate(res["best"])}}
             st.session_state["sl_res"] = res
             bar.empty()
@@ -223,7 +239,8 @@ def render():
                                                 "Total R": round(t["total_R"], 1), "Max DD R": round(t["dd"], 1)})
     ms = lambda ts: pd.to_datetime(ts, unit="ms").strftime("%Y-%m-%d")
     st.markdown(f"**Search period:** {ms(res['lo'])} → {ms(res['cut'])}   |   **Unseen test period:** {ms(res['cut'])} → {ms(res['hi'])}   |   "
-                f"{res['tested']} settings tried, {res['passed']} passed the training filter")
+                f"{res['tested']} settings tried, {res['passed']} passed the training filter  \n"
+                f"**Coins:** {res.get('mode', '')} (pool of {res.get('ncoins', '?')} coins)")
     rows = {"Original script (bugs fixed) – search period": fmt(res["base"]["train"]), "Original script (bugs fixed) – UNSEEN": fmt(res["base"]["test"])}
     for i, b in enumerate(res["best"]):
         rows[f"Candidate #{i + 1} – search period"] = fmt(b["train"])
