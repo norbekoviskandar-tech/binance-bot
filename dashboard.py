@@ -29,6 +29,7 @@ import radar
 import live_tab
 import strategy_lab
 import daily_study
+import data_export
 
 # Load API keys from .env
 load_dotenv()
@@ -339,7 +340,7 @@ if st.sidebar.button("💾 Save to config.yaml"):
 # =====================================================================================
 # TABS
 # =====================================================================================
-tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9 = st.tabs(["🔍 Scanner", "🤖 Bot", "💼 Account", "📜 Trade Log", "🧪 Backtest", "⚡ Top-10 Radar", "📡 Live Tape", "🧬 Strategy Lab", "🏆 Daily Winners"])
+tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10 = st.tabs(["🔍 Scanner", "🤖 Bot", "💼 Account", "📜 Trade Log", "🧪 Backtest", "⚡ Top-10 Radar", "📡 Live Tape", "🧬 Strategy Lab", "🏆 Daily Winners", "📦 Data for Claude"])
 
 # =====================================================================================
 # SCANNER TAB
@@ -741,3 +742,6 @@ with tab8:
 
 with tab9:
     daily_study.render()
+
+with tab10:
+    data_export.render()
