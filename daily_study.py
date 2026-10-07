@@ -3,7 +3,7 @@ and measure what they did NEXT. Then look for the numbers (candle shape, volume 
 going from coins that faded, and test those rules on days the search never touched.
 
 Honest rules: the ranking is only known at the day's close, so entry is the NEXT day's open (no peeking). Fees+slippage are charged once per
-round trip. Funding is ignored. The days are split 50% search / 25% validation / 25% FINAL; rules are searched on the first part, must also be
+round trip. Funding paid/received on the next day's three 8-hour settlements is included (longs pay when it is positive, shorts receive it). The days are split 50% search / 25% validation / 25% FINAL; rules are searched on the first part, must also be
 positive on the second, and only then are shown on the final part, which nothing was tuned on. The coin list is today's listed futures coins
 (coins delisted since are missing -> small survivorship bias)."""
 import itertools
@@ -21,9 +21,32 @@ GRID = dict(g_lo=[3, 6, 10, 15], g_hi=[25, 40, 1000], clv=[0, 0.5, 0.7, 0.85], v
             prev7=[1000, 20, 5], rank=[3, 5, 10], btc=["any", "up"], side=[1, -1])
 
 
-def load(days, min_qv, progress=lambda x, m: None):
+def funding(symbol, days):
+    """Per-day sum of funding rates (in %) keyed by the UTC day-open time (ms). Cached for an hour. Empty Series if unavailable."""
+    f = bt.CACHE / f"{symbol}_{days}_fund.pkl"
+    if f.exists() and time.time() - f.stat().st_mtime < 3600:
+        return pd.read_pickle(f)
+    start, out = int((time.time() - days * 86400) * 1000), []
+    while True:
+        k = bt.api("/fapi/v1/fundingRate", {"symbol": symbol, "startTime": start, "limit": 1000})
+        out += k
+        if len(k) < 1000:
+            break
+        start = k[-1]["fundingTime"] + 1
+        time.sleep(0.12)
+    if not out:
+        return pd.Series(dtype=float)
+    d = pd.DataFrame(out)
+    d["rate"] = d.fundingRate.astype(float) * 100
+    day = (d.fundingTime.astype("int64") - 3_600_000) // 86_400_000 * 86_400_000  # settlements land a few ms after the hour; the 00:00 one belongs to the day that just ended
+    ser = d.groupby(day).rate.sum()
+    ser.to_pickle(f)
+    return ser
+
+
+def load(days, min_qv, progress=lambda x, m: None, use_funding=True):
     syms = bt.universe(700)
-    data = {}
+    data, fund = {}, {}
     for i, s in enumerate(syms):
         progress((i + 1) / len(syms), f"Loading daily candles: {s} ({i + 1}/{len(syms)})")
         cached = (bt.CACHE / f"{s}_{days + 40}_1d.pkl").exists()
@@ -35,13 +58,19 @@ def load(days, min_qv, progress=lambda x, m: None):
             time.sleep(0.25)  # stay polite with Binance's rate limit
         if len(df) >= 40:
             data[s] = df
+            if use_funding:
+                try:
+                    fund[s] = funding(s, days + 40)
+                    time.sleep(0.15)
+                except Exception:
+                    pass  # no funding data for this coin -> treated as 0 (reported in the header)
     btc = bt.history("BTCUSDT", days + 40, "1d")
     if not data:
         raise RuntimeError("No candle data downloaded.")
-    return build(data, btc, days, min_qv)
+    return build(data, btc, days, min_qv, fund)
 
 
-def build(data, btc, days, min_qv):
+def build(data, btc, days, min_qv, fund=None):
     """data: {symbol: daily dataframe}. Returns the event table: one row per (day, coin) that was in that day's top 20 gainers."""
     panel = pd.concat({s: d.set_index("t")[["o", "h", "l", "c", "qv", "n", "tbq"]] for s, d in data.items()}, axis=1)
     F = {k: panel.xs(k, axis=1, level=1) for k in ["o", "h", "l", "c", "qv", "n", "tbq"]}
@@ -68,6 +97,15 @@ def build(data, btc, days, min_qv):
     for k, df in {**feat, "r1": r1 * 100, "r3": r3 * 100, "up1": up1 * 100, "dn1": dn1 * 100, "rank": rank}.items():
         ev[k] = df.values[idx[:, 0], idx[:, 1]]
     ev["mkt"] = ev.t.map(mkt * 100).values
+    # funding over the NEXT day (the day the trade is held), in %; 0 when a coin has no funding data
+    fd = pd.DataFrame({sym: ser for sym, ser in (fund or {}).items() if len(ser)}).reindex(c.index + 86_400_000) if fund else None
+    if fd is not None and fd.shape[1]:
+        fd.index = c.index
+        ev["fund"] = fd.reindex(columns=c.columns).values[idx[:, 0], idx[:, 1]]
+        ev["has_fund"] = ~np.isnan(ev["fund"].values)
+        ev["fund"] = ev["fund"].fillna(0.0)
+    else:
+        ev["fund"], ev["has_fund"] = 0.0, False
     ev["btc"] = ev.t.map(btc_g * 100).values
     ev["nliq"] = ev.t.map(elig.sum(axis=1)).values
     ev = ev[ev.t >= c.index.max() - days * 86_400_000].dropna(subset=FEATS).reset_index(drop=True)
@@ -120,7 +158,7 @@ def search(ev, topn, fee, min_ev):
         if sig in seen:  # different settings that select exactly the same trades are one rule
             continue
         seen.add(sig)
-        net = r["side"] * ev.r1.values - fee
+        net = r["side"] * (ev.r1.values - ev.fund.values) - fee
         tr = stats(net[m & part["search"]])
         if tr["n"] < min_ev or tr["avg"] <= 0 or tr["pf"] < 1.1:
             continue
@@ -132,14 +170,14 @@ def search(ev, topn, fee, min_ev):
     best = []
     for _, r, tr, va in found[:5]:
         m = rule_mask(ev, r, topn)
-        net = r["side"] * ev.r1.values - fee
+        net = r["side"] * (ev.r1.values - ev.fund.values) - fee
         sel = m & part["final"]
         best.append(dict(r=r, train=tr, val=va, final=stats(net[sel]), final_t=day_t(ev.t.values[sel], net[sel]), curve=(ev.t.values[sel], net[sel])))
     base = {}
     for name, p in part.items():
         for side, lab in ((1, "Long"), (-1, "Short")):
             sel = p
-            base[(lab, name)] = stats(side * ev.r1.values[sel] - fee, ev.mkt.values[sel] if side == 1 else None)
+            base[(lab, name)] = stats(side * (ev.r1.values[sel] - ev.fund.values[sel]) - fee, ev.mkt.values[sel] if side == 1 else None)
     return dict(best=best, base=base, tested=int(np.prod([len(v) for v in GRID.values()])), passed=len(found), d1=d1, d2=d2,
                 lo=int(ev.t.min()), hi=int(ev.t.max()), ev=ev)
 
@@ -154,7 +192,7 @@ def buckets(ev, fee, upto):
         except ValueError:
             continue
         for iv, g in e.groupby(q, observed=True):
-            net = g.r1.values - fee
+            net = g.r1.values - g.fund.values - fee
             rows.append({"Number": NAMES[f], "Range": f"{iv.left:.2f} to {iv.right:.2f}", "Coins": len(g), "Avg next day %": round(net.mean(), 2),
                          "Win %": round((net > 0).mean() * 100, 1), "Fades (next day < -3%) %": round((g.r1 < -3).mean() * 100, 1)})
     return pd.DataFrame(rows)
@@ -220,7 +258,7 @@ def render():
     ev, fee, topn = res["ev"], res["fee"], res["topn"]
     ms = lambda t: pd.to_datetime(t, unit="ms").strftime("%Y-%m-%d")
     st.markdown(f"**Search:** {ms(res['lo'])} → {ms(res['d1'])}  |  **Validation:** {ms(res['d1'])} → {ms(res['d2'])}  |  **FINAL:** {ms(res['d2'])} → {ms(res['hi'])}  |  "
-                f"{ev.t.nunique()} days, {int(ev.nliq.median())} liquid coins per day, {ev.sym.nunique()} different coins appeared in the top {topn}")
+                f"funding data on {ev.has_fund.mean() * 100:.0f}% of trades  |  {ev.t.nunique()} days, {int(ev.nliq.median())} liquid coins per day, {ev.sym.nunique()} different coins appeared in the top {topn}")
 
     st.markdown(f"### 1. What happens to the day's top {topn} the next day (no rules, just everyone)")
     rows = {}
@@ -229,7 +267,7 @@ def render():
                                                  "Profit factor": round(s["pf"], 2), "Avg coin that day %": round(s["bench"], 2) if lab == "Long" else None}
     st.dataframe(pd.DataFrame(rows).T, use_container_width=True)
     st.caption("Net of fees. 'Avg coin that day' = what the average liquid coin did the same next day (market drift), the bar a long must beat. "
-               "Shorts ignore funding costs and squeeze risk.")
+               "Funding is included (real settlements from Binance; coins without funding data count as 0). No stop is simulated, so squeeze risk on shorts is not shown.")
 
     st.markdown("### 2. Which numbers separate the continuers from the fades (search + validation days only)")
     st.dataframe(res["bk"], use_container_width=True, hide_index=True)
